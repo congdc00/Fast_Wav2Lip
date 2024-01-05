@@ -30,7 +30,7 @@ parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
 
 parser.add_argument('--face_det_batch_size', type=int, 
 					help='Batch size for face detection', default=16)
-parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=256)
+parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=1024)
 
 parser.add_argument('--resize_factor', default=1, type=int, 
 			help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
@@ -70,7 +70,6 @@ def face_detect(images):
 											flip_input=False, device=device)
 
 	batch_size = args.face_det_batch_size
-	
 	while 1:
 		predictions = []
 		try:
@@ -103,52 +102,13 @@ def face_detect(images):
 	results = [[image[y1: y2, x1:x2], (y1, y2, x1, x2)] for image, (x1, y1, x2, y2) in zip(images, boxes)]
 
 	del detector
+	np.save('test.npy', results)
 	return results 
 
-def datagen(frames, mels):
-	img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
+def datagen(frames):
 
-	if args.box[0] == -1:
-		face_det_results = np.load('test.npy', allow_pickle=True)
-	else:
-		print('Using the specified bounding box instead of face detection...')
-		y1, y2, x1, x2 = args.box
-		face_det_results = [[f[y1: y2, x1:x2], (y1, y2, x1, x2)] for f in frames]
+	face_detect(frames) # BGR2RGB for CNN face detection
 
-	for i, m in enumerate(mels):
-		idx = 0 if args.static else i%len(frames)
-		frame_to_save = frames[idx].copy()
-		face, coords = face_det_results[idx].copy()
-
-		face = cv2.resize(face, (args.img_size, args.img_size))
-			
-		img_batch.append(face)
-		mel_batch.append(m)
-		frame_batch.append(frame_to_save)
-		coords_batch.append(coords)
-
-		if len(img_batch) >= args.wav2lip_batch_size:
-			img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
-
-			img_masked = img_batch.copy()
-			img_masked[:, args.img_size//2:] = 0
-
-			img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
-			mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
-
-			yield img_batch, mel_batch, frame_batch, coords_batch
-			img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
-
-	if len(img_batch) > 0:
-		img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
-
-		img_masked = img_batch.copy()
-		img_masked[:, args.img_size//2:] = 0
-
-		img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
-		mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
-
-		yield img_batch, mel_batch, frame_batch, coords_batch
 
 mel_step_size = 16
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -175,86 +135,32 @@ def load_model(path):
 	model = model.to(device)
 	return model.eval()
 
-def get_audio(args):
-	if not args.audio.endswith('.wav'):
-		command = 'ffmpeg -y -i {} -strict -2 {}'.format(args.audio, 'temp/temp.wav')
-		subprocess.call(command, shell=True)
-		args.audio = 'temp/temp.wav'
-	
-	return args.audio
-
 def main():
-	# frames
 	video_stream = cv2.VideoCapture(args.face)
 	fps = video_stream.get(cv2.CAP_PROP_FPS)
+
+	print('Reading video frames...')
+
 	full_frames = []
-
-	# audio
-	audio_path = get_audio(args)
-	wav = audio.load_wav(audio_path, 16000)
-	mel = audio.melspectrogram(wav)
-	if np.isnan(mel.reshape(-1)).sum() > 0:
-		raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
-	mel_chunks = []
-	mel_idx_multiplier = 80./fps 
-
-	# process
-	i = 0
-	while True:
-		# Stop frame
+	while 1:
 		still_reading, frame = video_stream.read()
 		if not still_reading:
 			video_stream.release()
 			break
-		else:
-			# preprocess
-			if args.resize_factor > 1:
-				frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
-			if args.rotate:
-				frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
-			
-			# crop vung mat
-			y1, y2, x1, x2 = args.crop
-			if x2 == -1: x2 = frame.shape[1]
-			if y2 == -1: y2 = frame.shape[0]
-			frame = frame[y1:y2, x1:x2]
+		if args.resize_factor > 1:
+			frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
 
-			full_frames.append(frame)
+		if args.rotate:
+			frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
 
-		# Stop spetrogram
-		start_idx = int(i * mel_idx_multiplier)
-		if start_idx + mel_step_size > len(mel[0]):
-			mel_chunks.append(mel[:, len(mel[0]) - mel_step_size:])
-			break
-		else:
-			mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
-			i += 1
+		y1, y2, x1, x2 = args.crop
+		if x2 == -1: x2 = frame.shape[1]
+		if y2 == -1: y2 = frame.shape[0]
 
-	print(f"num_frames {len(full_frames)} and num_melspectrogram {len(mel_chunks)}")
+		frame = frame[y1:y2, x1:x2]
 
-
-	batch_size = args.wav2lip_batch_size
-	gen = datagen(full_frames.copy(), mel_chunks)
-
-	model = load_model(args.checkpoint_path)
-	frame_h, frame_w = full_frames[0].shape[:-1]
-	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
-	
-	for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=int(np.ceil(float(len(mel_chunks))/batch_size)))):
-		img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
-		mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
-		with torch.no_grad():
-			pred = model(mel_batch, img_batch)
-		pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
-		for p, f, c in zip(pred, frames, coords):
-			y1, y2, x1, x2 = c
-			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
-			f[y1:y2, x1:x2] = p
-			out.write(f)
-	out.release()
-
-	command = 'ffmpeg -loglevel quiet -y -i {} -i {} -strict -2 -q:v 1 {}'.format(audio_path, 'temp/result.avi', args.outfile)
-	subprocess.call(command, shell=platform.system() != 'Windows')
+		full_frames.append(frame)
+	gen = datagen(full_frames.copy())
 
 if __name__ == '__main__':
 	main()
