@@ -7,7 +7,7 @@ from glob import glob
 import torch, face_detection
 from models import Wav2Lip
 import platform
-
+import time
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
 parser.add_argument('--checkpoint_path', type=str, 
@@ -30,7 +30,7 @@ parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
 
 parser.add_argument('--face_det_batch_size', type=int, 
 					help='Batch size for face detection', default=16)
-parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=256)
+parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=16)
 
 parser.add_argument('--resize_factor', default=1, type=int, 
 			help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
@@ -240,7 +240,8 @@ def main():
 	frame_h, frame_w = full_frames[0].shape[:-1]
 	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
 	
-	for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, total=int(np.ceil(float(len(mel_chunks))/batch_size)))):
+	start_time = time.time()
+	for img_batch, mel_batch, frames, coords in gen:
 		img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
 		mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
 		with torch.no_grad():
@@ -251,6 +252,9 @@ def main():
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
 			f[y1:y2, x1:x2] = p
 			out.write(f)
+	end_time = time.time()
+	elapsed_time = end_time - start_time
+	print(f"Time run {elapsed_time}")
 	out.release()
 
 	command = 'ffmpeg -loglevel quiet -y -i {} -i {} -strict -2 -q:v 1 {}'.format(audio_path, 'temp/result.avi', args.outfile)
