@@ -14,3 +14,8 @@ evaluation/test_filelists/lr*.txt
 *.gif
 *.webm
 *.mp3
+cache/
+temp/
+results/
+data/
+checkpoints/

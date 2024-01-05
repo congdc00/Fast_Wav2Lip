@@ -109,10 +109,7 @@ def datagen(frames, mels):
 	img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
 
 	if args.box[0] == -1:
-		if not args.static:
-			face_det_results = face_detect(frames) # BGR2RGB for CNN face detection
-		else:
-			face_det_results = face_detect([frames[0]])
+		face_det_results = np.load('test.npy', allow_pickle=True)
 	else:
 		print('Using the specified bounding box instead of face detection...')
 		y1, y2, x1, x2 = args.box
@@ -273,7 +270,7 @@ def main():
 
 	out.release()
 
-	command = 'ffmpeg -loglevel=quiet -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/result.avi', args.outfile)
+	command = 'ffmpeg -loglevel quiet -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/result.avi', args.outfile)
 	subprocess.call(command, shell=platform.system() != 'Windows')
 
 if __name__ == '__main__':
