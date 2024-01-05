@@ -8,6 +8,8 @@ import torch, face_detection
 from models import Wav2Lip
 import platform
 import time
+import threading
+import copy
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
 parser.add_argument('--checkpoint_path', type=str, 
@@ -243,47 +245,69 @@ def main():
 	start_time = time.time()
 	end_time = time.time()
 	elapsed_time1, elapsed_time2, elapsed_time3, elapsed_time4 = 0,0,0,0
-	for img_batch, mel_batch, frames, coords in gen:
-		s_time= time.time()
 
-		img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
-		mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
-		
+	list_pred = []
+	gen_1 = list(gen).copy()
+	gen_2 = list(gen).copy()
+	def task1():
+		# gen mouse
+		for img_batch, mel_batch, frames, coords in gen_1:
+			img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
+			mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
+			
+			with torch.no_grad():
+				pred = model(mel_batch, img_batch)
+
+			pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+			list_pred.append(pred)
 	
-		e_time = time.time()
-		elapsed_time1 = e_time - s_time + elapsed_time1
-		print(f"Time run 1 {elapsed_time1}")
+	def task2():
+		list_check = list_pred.copy()
+		while list_check == []:
+			time.sleep(0.1)
+			list_check = list_pred.copy()
 
-		s_time= time.time()
-		with torch.no_grad():
-			pred = model(mel_batch, img_batch)
-
-		e_time = time.time()
-		elapsed_time2 = e_time - s_time + elapsed_time2
-		print(f"Time run 2 {elapsed_time2}")
-
-		s_time= time.time()
-		pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
-
-		e_time = time.time()
-		elapsed_time3 = e_time - s_time + elapsed_time3
-		print(f"Time run 3 {elapsed_time3}")
-
-		s_time= time.time()
-		for p, f, c in zip(pred, frames, coords):
-			y1, y2, x1, x2 = c
-			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
-
-			f[y1:y2, x1:x2] = p
-			out.write(f)
+		i = 1
 		
-		e_time = time.time()
-		elapsed_time4 = e_time - s_time + elapsed_time4
-		print(f"Time run 4 {elapsed_time4}")
-		
+		for _, _, frames, coords in gen_2:
+			while len(list_check) <= i:
+				time.sleep(0.1)
+				list_check = list_pred.copy()	
+			pred = list_check[i-1]
+			for p, f, c in zip(pred, frames, coords):
+				thread = threading.Thread(target=sub_task, args=(p, f, c))
+				thread.start()
+		try:	
+			thread.join()
+		except:
+			pass
+
+	def sub_task(p, f, c):
+		y1, y2, x1, x2 = c
+		p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+		f[y1:y2, x1:x2] = p
+		out.write(f)
+	# Tạo đối tượng thread cho mỗi công việc
+	thread1 = threading.Thread(target=task1)
+	thread2 = threading.Thread(target=task2)
+
+	# Khởi động các luồng
+	s1_time = time.time()
+	thread1.start()
+	s2_time = time.time()
+	thread2.start()
+
+	# Chờ cho đến khi cả hai luồng hoàn thành
+	e1_time = time.time()
+	thread1.join()
+	e2_time = time.time()
+	thread2.join()	
+
 	end_time = time.time()
 	elapsed_time = end_time - start_time
-	print(f"Time run {elapsed_time}")
+	print(f"Time task 1 {e1_time - s1_time}")
+	print(f"Time task 2 {e2_time - s2_time}")
+	print(f"Total time {elapsed_time}")
 	out.release()
 
 	command = 'ffmpeg -loglevel quiet -y -i {} -i {} -strict -2 -q:v 1 {}'.format(audio_path, 'temp/result.avi', args.outfile)
