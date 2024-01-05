@@ -241,17 +241,37 @@ def main():
 	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
 	
 	start_time = time.time()
+	end_time = time.time()
+	elapsed_time = end_time - start_time
 	for img_batch, mel_batch, frames, coords in gen:
 		img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
 		mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
+		
+		end_time = time.time()
+		elapsed_time = end_time - start_time - elapsed_time
+		print(f"Time run 1 {elapsed_time}")
+
 		with torch.no_grad():
 			pred = model(mel_batch, img_batch)
+
+		end_time = time.time()
+		elapsed_time = end_time - start_time - elapsed_time
+		print(f"Time run 2 {elapsed_time}")
+
+
 		pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+
+		end_time = time.time()
+		elapsed_time = end_time - start_time - elapsed_time
+		print(f"Time run 3 {elapsed_time}")
+
 		for p, f, c in zip(pred, frames, coords):
 			y1, y2, x1, x2 = c
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+
 			f[y1:y2, x1:x2] = p
 			out.write(f)
+		
 	end_time = time.time()
 	elapsed_time = end_time - start_time
 	print(f"Time run {elapsed_time}")
