@@ -32,7 +32,7 @@ parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
 
 parser.add_argument('--face_det_batch_size', type=int, 
 					help='Batch size for face detection', default=16)
-parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=16)
+parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=32)
 
 parser.add_argument('--resize_factor', default=1, type=int, 
 			help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
@@ -240,15 +240,14 @@ def main():
 
 	model = load_model(args.checkpoint_path)
 	frame_h, frame_w = full_frames[0].shape[:-1]
-	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
+	
 	
 	start_time = time.time()
-	end_time = time.time()
-	elapsed_time1, elapsed_time2, elapsed_time3, elapsed_time4 = 0,0,0,0
 
 	list_pred = []
 	gen_1 = list(gen).copy()
-	gen_2 = list(gen).copy()
+	gen_2 = gen_1.copy()
+	
 	def task1():
 		# gen mouse
 		for img_batch, mel_batch, frames, coords in gen_1:
@@ -261,53 +260,55 @@ def main():
 			pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
 			list_pred.append(pred)
 	
+	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
+	list_frame = {}
 	def task2():
 		list_check = list_pred.copy()
 		while list_check == []:
 			time.sleep(0.1)
 			list_check = list_pred.copy()
-
-		i = 1
 		
-		for _, _, frames, coords in gen_2:
-			while len(list_check) <= i:
+		index_frame = 0
+		for i, (_, _, frames, coords) in enumerate(gen_2, start=1):
+			while len(list_check) < i:
 				time.sleep(0.1)
 				list_check = list_pred.copy()	
+			
 			pred = list_check[i-1]
+			
 			for p, f, c in zip(pred, frames, coords):
-				thread = threading.Thread(target=sub_task, args=(p, f, c))
-				thread.start()
-		try:	
-			thread.join()
-		except:
-			pass
+				y1, y2, x1, x2 = c
+				p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+				f[y1:y2, x1:x2] = p
+				list_frame[str(index_frame)] = f
+				index_frame+=1
 
-	def sub_task(p, f, c):
-		y1, y2, x1, x2 = c
-		p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
-		f[y1:y2, x1:x2] = p
-		out.write(f)
 	# Tạo đối tượng thread cho mỗi công việc
 	thread1 = threading.Thread(target=task1)
 	thread2 = threading.Thread(target=task2)
 
 	# Khởi động các luồng
-	s1_time = time.time()
+	# s1_time = time.time()
 	thread1.start()
-	s2_time = time.time()
+	# s2_time = time.time()
 	thread2.start()
 
 	# Chờ cho đến khi cả hai luồng hoàn thành
-	e1_time = time.time()
+	
 	thread1.join()
-	e2_time = time.time()
+	# e1_time = time.time()
+	# print(f"Time task 1 {e1_time - s1_time}")
+	
 	thread2.join()	
+	# e2_time = time.time()
+	# print(f"Time task 2 {e2_time - s2_time}")
 
 	end_time = time.time()
 	elapsed_time = end_time - start_time
-	print(f"Time task 1 {e1_time - s1_time}")
-	print(f"Time task 2 {e2_time - s2_time}")
 	print(f"Total time {elapsed_time}")
+	
+	for i in range(1, len(list_frame)):
+		out.write(list_frame[str(i)])
 	out.release()
 
 	command = 'ffmpeg -loglevel quiet -y -i {} -i {} -strict -2 -q:v 1 {}'.format(audio_path, 'temp/result.avi', args.outfile)
