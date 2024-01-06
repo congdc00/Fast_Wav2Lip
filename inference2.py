@@ -236,7 +236,7 @@ def main():
 	
 	start_time = time.time()
 
-	q_batch  = queue.Queue()
+	list_pred = queue.Queue()
 	def task1():
 		# gen mouse
 		for idx_batch, img_batch, mel_batch in gen:
@@ -245,27 +245,19 @@ def main():
 			
 			with torch.no_grad():
 				pred_batch = model(mel_batch, img_batch)
-			q_batch.put([idx_batch, pred_batch])
+			
+			sub_thread = threading.Thread(target=update_list_pred, args=(idx_batch, pred_batch))
+			sub_thread.start()
 
 			
-	list_pred = queue.Queue()
-	len_mels = len(full_mels)
-	num_batch = len_mels//args.wav2lip_batch_size
-	if len_mels % args.wav2lip_batch_size >0:
-		num_batch += 1
-	def task2():
-		for i in range(num_batch):
-			while q_batch.empty():
-				time.sleep(0.05)
-			idx_batch, pred_batch = q_batch.get()
-			pred_batch = pred_batch.cpu().numpy().transpose(0, 2, 3, 1) * 255.
-			for idx, pred in zip(idx_batch, pred_batch):
-				list_pred.put({"idx": idx, "pred": pred})
 	
+	def update_list_pred(idx_batch, pred_batch):
+		pred_batch = pred_batch.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+		for idx, pred in zip(idx_batch, pred_batch):
+			list_pred.put({"idx": idx, "pred": pred})
 
-	
 	list_frame = {}
-	def task3():
+	def task2():
 		while len(list_frame) < len(full_frames):
 			while list_pred.empty():
 				time.sleep(0.05)
@@ -285,29 +277,22 @@ def main():
 	
 	thread1 = threading.Thread(target=task1)
 	thread2 = threading.Thread(target=task2)
-	thread3 = threading.Thread(target=task3)
 
 	# Khởi động các luồng
 	s1_time = time.time()
 	thread1.start()
 	s2_time = time.time()
 	thread2.start()
-	s3_time = time.time()
-	thread3.start()
 
 	# Chờ cho đến khi cả hai luồng hoàn thành
 	
 	thread1.join()
 	e1_time = time.time()
 	print(f"Time task gpu {e1_time - s1_time}")
-
+	
 	thread2.join()	
 	e2_time = time.time()
-	print(f"Time move {e2_time - s2_time}")
-	
-	thread3.join()	
-	e3_time = time.time()
-	print(f"Time task cpu {e3_time - s3_time}")
+	print(f"Time task cpu {e2_time - s2_time}")
 
 	end_time = time.time()
 	elapsed_time = end_time - start_time
