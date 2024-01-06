@@ -260,7 +260,7 @@ def main():
 			pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
 			list_pred.append(pred)
 	
-	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
+	
 	list_frame = {}
 	def task2():
 		list_check = list_pred.copy()
@@ -307,6 +307,7 @@ def main():
 	elapsed_time = end_time - start_time
 	print(f"Total time {elapsed_time}")
 	
+	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
 	for i in range(1, len(list_frame)):
 		out.write(list_frame[str(i)])
 	out.release()
