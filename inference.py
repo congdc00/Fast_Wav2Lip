@@ -288,20 +288,20 @@ def main():
 	thread2 = threading.Thread(target=task2)
 
 	# Khởi động các luồng
-	# s1_time = time.time()
+	s1_time = time.time()
 	thread1.start()
-	# s2_time = time.time()
+	s2_time = time.time()
 	thread2.start()
 
 	# Chờ cho đến khi cả hai luồng hoàn thành
 	
 	thread1.join()
-	# e1_time = time.time()
-	# print(f"Time task 1 {e1_time - s1_time}")
+	e1_time = time.time()
+	print(f"Time task gpu {e1_time - s1_time}")
 	
 	thread2.join()	
-	# e2_time = time.time()
-	# print(f"Time task 2 {e2_time - s2_time}")
+	e2_time = time.time()
+	print(f"Time task cpu {e2_time - s2_time}")
 
 	end_time = time.time()
 	elapsed_time = end_time - start_time
