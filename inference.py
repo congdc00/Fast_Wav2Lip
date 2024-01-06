@@ -283,7 +283,9 @@ def main():
 				list_frame[str(index_frame)] = f
 				index_frame+=1
 
+	print("before thread", time.time() - start_time)
 	# Tạo đối tượng thread cho mỗi công việc
+	
 	thread1 = threading.Thread(target=task1)
 	thread2 = threading.Thread(target=task2)
 
@@ -306,7 +308,7 @@ def main():
 	end_time = time.time()
 	elapsed_time = end_time - start_time
 	print(f"Total time {elapsed_time}")
-	
+
 	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
 	for i in range(1, len(list_frame)):
 		out.write(list_frame[str(i)])
