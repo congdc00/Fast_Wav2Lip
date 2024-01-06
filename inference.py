@@ -245,12 +245,10 @@ def main():
 	start_time = time.time()
 
 	list_pred = []
-	gen_1 = list(gen).copy()
-	gen_2 = gen_1.copy()
 	
 	def task1():
 		# gen mouse
-		for img_batch, mel_batch, frames, coords in gen_1:
+		for img_batch, mel_batch, _, _ in gen:
 			img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
 			mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
 			

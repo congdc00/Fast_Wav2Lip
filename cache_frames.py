@@ -29,8 +29,8 @@ parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
 					help='Padding (top, bottom, left, right). Please adjust to include chin at least')
 
 parser.add_argument('--face_det_batch_size', type=int, 
-					help='Batch size for face detection', default=16)
-parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=16)
+					help='Batch size for face detection', default=4)
+parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=4)
 
 parser.add_argument('--resize_factor', default=1, type=int, 
 			help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
@@ -160,7 +160,7 @@ def main():
 		frame = frame[y1:y2, x1:x2]
 
 		full_frames.append(frame)
-	gen = datagen(full_frames.copy())
+	gen = datagen(full_frames)
 
 if __name__ == '__main__':
 	main()
