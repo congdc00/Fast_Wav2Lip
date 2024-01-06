@@ -102,7 +102,7 @@ def face_detect(images):
 	results = [[image[y1: y2, x1:x2], (y1, y2, x1, x2)] for image, (x1, y1, x2, y2) in zip(images, boxes)]
 
 	del detector
-	np.save('test.npy', results)
+	np.save('data/lib/01/face_pose.npy', results)
 	return results 
 
 def datagen(frames):
