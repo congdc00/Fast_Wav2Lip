@@ -1,4 +1,9 @@
+import sys
+
+sys.path.append('core/Fast_Wav2Lip/')
+
 from os import listdir, path
+
 import numpy as np
 import scipy, cv2, os, sys, argparse, audio
 import json, subprocess, random, string
@@ -11,17 +16,13 @@ import time
 import threading
 import copy
 import queue
+
+
+
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
-parser.add_argument('--checkpoint_path', type=str, 
-					help='Name of saved checkpoint to load weights from', required=True)
-
-parser.add_argument('--face', type=str, 
-					help='Filepath of video/image that contains faces to use', required=True)
-parser.add_argument('--audio', type=str, 
-					help='Filepath of video/audio file to use as raw audio source', required=True)
 parser.add_argument('--outfile', type=str, help='Video path to save result. See default for an e.g.', 
-								default='results/result_voice.mp4')
+								default='./temp/result_voice.mp4')
 
 parser.add_argument('--static', type=bool, 
 					help='If True, then use only first video frame for inference', default=False)
@@ -55,10 +56,6 @@ parser.add_argument('--nosmooth', default=False, action='store_true',
 
 args = parser.parse_args()
 args.img_size = 96
-
-if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-	args.static = True
-
 def get_smoothened_boxes(boxes, T):
 	for i in range(len(boxes)):
 		if i + T > len(boxes):
@@ -69,6 +66,7 @@ def get_smoothened_boxes(boxes, T):
 	return boxes
 
 def face_detect(images):
+	
 	detector = face_detection.FaceAlignment(face_detection.LandmarksType._2D, 
 											flip_input=False, device=device)
 
@@ -109,7 +107,9 @@ def face_detect(images):
 	return results
 
 def load_cache(args, max_frames):
-	face_det_results = np.load('test.npy', allow_pickle=True) 
+	face_pose = args.face.replace("video.mp4", "face_pose.npy")
+	print(f"face_pose {face_pose}")
+	face_det_results = np.load(face_pose, allow_pickle=True) 
 	face_det_results = face_det_results[:max_frames]
 	faces_origin = [face_det_result[0] for face_det_result in face_det_results]
 	faces = [cv2.resize(face, (args.img_size, args.img_size)) for face in faces_origin]
@@ -169,22 +169,16 @@ def load_model(path):
 	model = model.to(device)
 	return model.eval()
 
-def get_audio(args):
-	if not args.audio.endswith('.wav'):
-		command = 'ffmpeg -y -i {} -strict -2 {}'.format(args.audio, 'temp/temp.wav')
-		subprocess.call(command, shell=True)
-		args.audio = 'temp/temp.wav'
-	
-	return args.audio
 
-def main():
+def lipsync(video_path, audio_path):
+	args.checkpoint_path = "core/Fast_Wav2Lip/checkpoints/wav2lip.pth" 
+	args.face = video_path
 	# frames
-	video_stream = cv2.VideoCapture(args.face)
+	video_stream = cv2.VideoCapture(video_path)
 	fps = video_stream.get(cv2.CAP_PROP_FPS)
 	full_frames = []
 
 	# audio
-	audio_path = get_audio(args)
 	wav = audio.load_wav(audio_path, 16000)
 	mel = audio.melspectrogram(wav)
 	if np.isnan(mel.reshape(-1)).sum() > 0:
@@ -260,7 +254,7 @@ def main():
 	def task2():
 		while len(list_frame) < len(full_frames):
 			while list_pred.empty():
-				time.sleep(0.05)
+				time.sleep(0.02)
     	
 			item = list_pred.get()
 			idx = item["idx"]
@@ -307,4 +301,4 @@ def main():
 	subprocess.call(command, shell=platform.system() != 'Windows')
 
 if __name__ == '__main__':
-	main()
+	lipsync("/home/congdc/hdd/Video_dubbing/W2L_Stream/core/Fast_Wav2Lip/data/test/10s/video.mp4", "congdc/hdd/Video_dubbing/W2L_Stream/core/Fast_Wav2Lip/data/test/10s/audio.wav")
