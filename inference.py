@@ -231,7 +231,6 @@ def lipsync(video_path, audio_path):
 	
 	
 	start_time = time.time()
-
 	list_pred = queue.Queue()
 	def task1():
 		# gen mouse

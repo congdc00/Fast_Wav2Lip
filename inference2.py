@@ -19,8 +19,6 @@ import threading
 import copy
 import queue
 
-
-
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
 parser.add_argument('--outfile', type=str, help='Video path to save result. See default for an e.g.', 
@@ -171,47 +169,15 @@ def load_model(path):
 	model = model.to(device)
 	return model.eval()
 
-
-def lipsync(video_path, audio_path):
-	args.checkpoint_path = "core/Fast_Wav2Lip/checkpoints/wav2lip.pth" 
-	args.face = video_path
-	# frames
-	video_stream = cv2.VideoCapture(video_path)
-	fps = video_stream.get(cv2.CAP_PROP_FPS)
-	full_frames = []
-
-	# audio
+def load_melspetrogram(audio_path, fps = 30):
 	wav = audio.load_wav(audio_path, 16000)
 	mel = audio.melspectrogram(wav)
 	if np.isnan(mel.reshape(-1)).sum() > 0:
 		raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
 	full_mels = []
 	mel_idx_multiplier = 80./fps 
-
-	# process
 	i = 0
 	while True:
-		# Stop frame
-		still_reading, frame = video_stream.read()
-		if not still_reading:
-			video_stream.release()
-			break
-		else:
-			# preprocess
-			if args.resize_factor > 1:
-				frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
-			if args.rotate:
-				frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
-			
-			# crop vung mat
-			y1, y2, x1, x2 = args.crop
-			if x2 == -1: x2 = frame.shape[1]
-			if y2 == -1: y2 = frame.shape[0]
-			frame = frame[y1:y2, x1:x2]
-
-			full_frames.append(frame)
-
-		# Stop spetrogram
 		start_idx = int(i * mel_idx_multiplier)
 		if start_idx + mel_step_size > len(mel[0]):
 			full_mels.append(mel[:, len(mel[0]) - mel_step_size:])
@@ -219,88 +185,67 @@ def lipsync(video_path, audio_path):
 		else:
 			full_mels.append(mel[:, start_idx : start_idx + mel_step_size])
 			i += 1
+	return full_mels
 
+# load full frame 
+frames_path ="core/Fast_Wav2Lip/data/lib/01/frames"
+list_frames_path = glob(f"{frames_path}/*")
+full_frames = []
+for idx in range(1, len(list_frames_path)+1):
+	frame_path = f"{frames_path}/{idx:04d}.png"
+	frame = cv2.imread(frame_path)
+	if args.resize_factor > 1:
+		frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
+	if args.rotate:
+		frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
 	
+	# crop vung mat
+	y1, y2, x1, x2 = args.crop
+	if x2 == -1: x2 = frame.shape[1]
+	if y2 == -1: y2 = frame.shape[0]
+	frame = frame[y1:y2, x1:x2]
+	full_frames.append(frame)
+args.face = f"core/Fast_Wav2Lip/data/lib/01/video.mp4"
+args.checkpoint_path = "core/Fast_Wav2Lip/checkpoints/wav2lip.pth" 
+full_faces, full_coors = load_cache(args, len(full_frames))
+frame_h, frame_w = full_frames[0].shape[:-1]
 
-	full_faces, full_coors = load_cache(args, len(full_frames))
-	batch_size = args.wav2lip_batch_size
-	gen = datagen(full_faces, full_mels)
 
-	model = load_model(args.checkpoint_path)
-	frame_h, frame_w = full_frames[0].shape[:-1]
+model = load_model(args.checkpoint_path)
+def lipsync(face,coor, mel, img):
+	img_batch, mel_batch = [face], [mel]
+	img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
+	img_masked = img_batch.copy()
+	img_masked[:, args.img_size//2:] = 0
+	img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
+	mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
+
+	img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
+	mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
 	
+	with torch.no_grad():
+		pred_batch = model(mel_batch, img_batch)
+
+	pred_batch = pred_batch.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+	pred = pred_batch[0]
+
+	y1, y2, x1, x2 = coor
+	pred = cv2.resize(pred.astype(np.uint8), (x2 - x1, y2 - y1))
+	img[y1:y2, x1:x2] = pred
 	
-	start_time = time.time()
+	return img
 
-	list_pred = queue.Queue()
-	def task1():
-		# gen mouse
-		for idx_batch, img_batch, mel_batch in gen:
-			img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
-			mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
-			
-			with torch.no_grad():
-				pred_batch = model(mel_batch, img_batch)
-			
-			sub_thread = threading.Thread(target=update_list_pred, args=(idx_batch, pred_batch))
-			sub_thread.start()
-
-			
-	
-	def update_list_pred(idx_batch, pred_batch):
-		pred_batch = pred_batch.cpu().numpy().transpose(0, 2, 3, 1) * 255.
-		for idx, pred in zip(idx_batch, pred_batch):
-			list_pred.put({"idx": idx, "pred": pred})
-
-	list_frame = {}
-	def task2():
-		while len(list_frame) < len(full_frames):
-			while list_pred.empty():
-				time.sleep(0.02)
-    	
-			item = list_pred.get()
-			idx = item["idx"]
-			pred = item["pred"]
-				
-			f, c = full_frames[idx], full_coors[idx]
-			y1, y2, x1, x2 = c
-			pred = cv2.resize(pred.astype(np.uint8), (x2 - x1, y2 - y1))
-			f[y1:y2, x1:x2] = pred
-			list_frame[str(idx)] = f
-
-	print("before thread", time.time() - start_time)
-	# Tạo đối tượng thread cho mỗi công việc
-	
-	thread1 = threading.Thread(target=task1)
-	thread2 = threading.Thread(target=task2)
-
-	# Khởi động các luồng
-	s1_time = time.time()
-	thread1.start()
-	s2_time = time.time()
-	thread2.start()
-
-	# Chờ cho đến khi cả hai luồng hoàn thành
-	
-	thread1.join()
-	e1_time = time.time()
-	print(f"Time task gpu {e1_time - s1_time}")
-	
-	thread2.join()	
-	e2_time = time.time()
-	print(f"Time task cpu {e2_time - s2_time}")
-
-	end_time = time.time()
-	elapsed_time = end_time - start_time
-	print(f"Total time {elapsed_time}")
-
-	out = cv2.VideoWriter('temp/result.avi', cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
-	for i in range(1, len(list_frame)):
-		out.write(list_frame[str(i)])
-	out.release()
-
-	command = 'ffmpeg -loglevel quiet -y -i {} -i {} -strict -2 -q:v 1 {}'.format(audio_path, 'temp/result.avi', args.outfile)
-	subprocess.call(command, shell=platform.system() != 'Windows')
-
+def get_frame():
+	i = -1
+	step = 1
+	max_frames = len(full_coors)
+	while True:
+		if i == max_frames - 1:
+			step = -1
+		elif i == 1:
+			step = 1
+		i = i + step
+		print(f"i {i}")
+		yield full_faces[i],full_coors[i], full_frames[i]
 if __name__ == '__main__':
 	lipsync(f"{WORK_PATH}/data/lib/01/video.mp4", f"{WORK_PATH}/data/test/10s/audio.wav")
