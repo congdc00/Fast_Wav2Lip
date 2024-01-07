@@ -245,7 +245,6 @@ def get_frame():
 		elif i == 1:
 			step = 1
 		i = i + step
-		print(f"i {i}")
 		yield full_faces[i],full_coors[i], full_frames[i]
 if __name__ == '__main__':
 	lipsync(f"{WORK_PATH}/data/lib/01/video.mp4", f"{WORK_PATH}/data/test/10s/audio.wav")
