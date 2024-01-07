@@ -188,12 +188,16 @@ def load_melspetrogram(audio_path, fps = 30):
 	return full_mels
 
 # load full frame 
-frames_path ="core/Fast_Wav2Lip/data/lib/01/frames"
-list_frames_path = glob(f"{frames_path}/*")
+video_path ="core/Fast_Wav2Lip/data/lib/01/video.mp4"
+
+video_stream = cv2.VideoCapture(video_path)
+fps = video_stream.get(cv2.CAP_PROP_FPS)
 full_frames = []
-for idx in range(1, len(list_frames_path)+1):
-	frame_path = f"{frames_path}/{idx:04d}.png"
-	frame = cv2.imread(frame_path)
+while True:
+	still_reading, frame = video_stream.read()
+	if not still_reading:
+		video_stream.release()
+		break
 	if args.resize_factor > 1:
 		frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
 	if args.rotate:
