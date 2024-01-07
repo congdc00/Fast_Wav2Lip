@@ -1,6 +1,8 @@
+import os
+ROOT_PATH = os.getcwd()
 import sys
-
-sys.path.append('core/Fast_Wav2Lip/')
+WORK_PATH = f'{ROOT_PATH}/core/Fast_Wav2Lip/'
+sys.path.append(WORK_PATH)
 
 from os import listdir, path
 
@@ -301,4 +303,4 @@ def lipsync(video_path, audio_path):
 	subprocess.call(command, shell=platform.system() != 'Windows')
 
 if __name__ == '__main__':
-	lipsync("/home/congdc/hdd/Video_dubbing/W2L_Stream/core/Fast_Wav2Lip/data/test/10s/video.mp4", "congdc/hdd/Video_dubbing/W2L_Stream/core/Fast_Wav2Lip/data/test/10s/audio.wav")
+	lipsync(f"{WORK_PATH}/data/lib/01/video.mp4", f"{WORK_PATH}/data/test/10s/audio.wav")

@@ -1,4 +1,11 @@
+import os
+ROOT_PATH = os.getcwd()
+import sys
+WORK_PATH = f'{ROOT_PATH}/core/Fast_Wav2Lip/'
+sys.path.append(WORK_PATH)
+
 from os import listdir, path
+
 import numpy as np
 import scipy, cv2, os, sys, argparse, audio
 import json, subprocess, random, string
@@ -10,17 +17,14 @@ import platform
 import time
 import threading
 import copy
+import queue
+
+
+
 parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
 
-parser.add_argument('--checkpoint_path', type=str, 
-					help='Name of saved checkpoint to load weights from', required=True)
-
-parser.add_argument('--face', type=str, 
-					help='Filepath of video/image that contains faces to use', required=True)
-parser.add_argument('--audio', type=str, 
-					help='Filepath of video/audio file to use as raw audio source', required=True)
 parser.add_argument('--outfile', type=str, help='Video path to save result. See default for an e.g.', 
-								default='results/result_voice.mp4')
+								default='./temp/result_voice.mp4')
 
 parser.add_argument('--static', type=bool, 
 					help='If True, then use only first video frame for inference', default=False)
@@ -31,8 +35,8 @@ parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
 					help='Padding (top, bottom, left, right). Please adjust to include chin at least')
 
 parser.add_argument('--face_det_batch_size', type=int, 
-					help='Batch size for face detection', default=16)
-parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=32)
+					help='Batch size for face detection', default=8)
+parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=16)
 
 parser.add_argument('--resize_factor', default=1, type=int, 
 			help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
@@ -54,10 +58,6 @@ parser.add_argument('--nosmooth', default=False, action='store_true',
 
 args = parser.parse_args()
 args.img_size = 96
-
-if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-	args.static = True
-
 def get_smoothened_boxes(boxes, T):
 	for i in range(len(boxes)):
 		if i + T > len(boxes):
@@ -68,6 +68,7 @@ def get_smoothened_boxes(boxes, T):
 	return boxes
 
 def face_detect(images):
+	
 	detector = face_detection.FaceAlignment(face_detection.LandmarksType._2D, 
 											flip_input=False, device=device)
 
@@ -105,52 +106,46 @@ def face_detect(images):
 	results = [[image[y1: y2, x1:x2], (y1, y2, x1, x2)] for image, (x1, y1, x2, y2) in zip(images, boxes)]
 
 	del detector
-	return results 
+	return results
 
-def datagen(frames, mels):
-	img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
+def load_cache(args, max_frames):
+	face_pose = args.face.replace("video.mp4", "face_pose.npy")
+	print(f"face_pose {face_pose}")
+	face_det_results = np.load(face_pose, allow_pickle=True) 
+	face_det_results = face_det_results[:max_frames]
+	faces_origin = [face_det_result[0] for face_det_result in face_det_results]
+	faces = [cv2.resize(face, (args.img_size, args.img_size)) for face in faces_origin]
+	coors = [face_det_result[1] for face_det_result in face_det_results]
+	return faces, coors
 
-	if args.box[0] == -1:
-		face_det_results = np.load('test.npy', allow_pickle=True)
-	else:
-		print('Using the specified bounding box instead of face detection...')
-		y1, y2, x1, x2 = args.box
-		face_det_results = [[f[y1: y2, x1:x2], (y1, y2, x1, x2)] for f in frames]
-
-	for i, m in enumerate(mels):
-		idx = 0 if args.static else i%len(frames)
-		frame_to_save = frames[idx].copy()
-		face, coords = face_det_results[idx].copy()
-
-		face = cv2.resize(face, (args.img_size, args.img_size))
-			
-		img_batch.append(face)
+def datagen(faces, mels):
+	idx_batch, img_batch, mel_batch = [], [], []
+	for idx, m in enumerate(mels):
+		idx_batch.append(idx)
+		img_batch.append(faces[idx])
 		mel_batch.append(m)
-		frame_batch.append(frame_to_save)
-		coords_batch.append(coords)
 
 		if len(img_batch) >= args.wav2lip_batch_size:
 			img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
 
 			img_masked = img_batch.copy()
 			img_masked[:, args.img_size//2:] = 0
-
 			img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
+
 			mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
-			yield img_batch, mel_batch, frame_batch, coords_batch
-			img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
+			yield idx_batch, img_batch, mel_batch
+			idx_batch, img_batch, mel_batch = [], [], []
 
 	if len(img_batch) > 0:
 		img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
 
 		img_masked = img_batch.copy()
 		img_masked[:, args.img_size//2:] = 0
-
 		img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
 		mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
-		yield img_batch, mel_batch, frame_batch, coords_batch
+		yield idx_batch, img_batch, mel_batch
 
 mel_step_size = 16
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -173,31 +168,24 @@ def load_model(path):
 	for k, v in s.items():
 		new_s[k.replace('module.', '')] = v
 	model.load_state_dict(new_s)
-
 	model = model.to(device)
 	return model.eval()
 
-def get_audio(args):
-	if not args.audio.endswith('.wav'):
-		command = 'ffmpeg -y -i {} -strict -2 {}'.format(args.audio, 'temp/temp.wav')
-		subprocess.call(command, shell=True)
-		args.audio = 'temp/temp.wav'
-	
-	return args.audio
 
-def main():
+def lipsync(video_path, audio_path):
+	args.checkpoint_path = "core/Fast_Wav2Lip/checkpoints/wav2lip.pth" 
+	args.face = video_path
 	# frames
-	video_stream = cv2.VideoCapture(args.face)
+	video_stream = cv2.VideoCapture(video_path)
 	fps = video_stream.get(cv2.CAP_PROP_FPS)
 	full_frames = []
 
 	# audio
-	audio_path = get_audio(args)
 	wav = audio.load_wav(audio_path, 16000)
 	mel = audio.melspectrogram(wav)
 	if np.isnan(mel.reshape(-1)).sum() > 0:
 		raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
-	mel_chunks = []
+	full_mels = []
 	mel_idx_multiplier = 80./fps 
 
 	# process
@@ -226,17 +214,17 @@ def main():
 		# Stop spetrogram
 		start_idx = int(i * mel_idx_multiplier)
 		if start_idx + mel_step_size > len(mel[0]):
-			mel_chunks.append(mel[:, len(mel[0]) - mel_step_size:])
+			full_mels.append(mel[:, len(mel[0]) - mel_step_size:])
 			break
 		else:
-			mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
+			full_mels.append(mel[:, start_idx : start_idx + mel_step_size])
 			i += 1
 
-	print(f"num_frames {len(full_frames)} and num_melspectrogram {len(mel_chunks)}")
+	
 
-
+	full_faces, full_coors = load_cache(args, len(full_frames))
 	batch_size = args.wav2lip_batch_size
-	gen = datagen(full_frames.copy(), mel_chunks)
+	gen = datagen(full_faces, full_mels)
 
 	model = load_model(args.checkpoint_path)
 	frame_h, frame_w = full_frames[0].shape[:-1]
@@ -244,44 +232,41 @@ def main():
 	
 	start_time = time.time()
 
-	list_pred = []
-	gen_1 = list(gen).copy()
-	gen_2 = gen_1.copy()
-	
+	list_pred = queue.Queue()
 	def task1():
 		# gen mouse
-		for img_batch, mel_batch, frames, coords in gen_1:
+		for idx_batch, img_batch, mel_batch in gen:
 			img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
 			mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
 			
 			with torch.no_grad():
-				pred = model(mel_batch, img_batch)
+				pred_batch = model(mel_batch, img_batch)
+			
+			sub_thread = threading.Thread(target=update_list_pred, args=(idx_batch, pred_batch))
+			sub_thread.start()
 
-			pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
-			list_pred.append(pred)
+			
 	
-	
+	def update_list_pred(idx_batch, pred_batch):
+		pred_batch = pred_batch.cpu().numpy().transpose(0, 2, 3, 1) * 255.
+		for idx, pred in zip(idx_batch, pred_batch):
+			list_pred.put({"idx": idx, "pred": pred})
+
 	list_frame = {}
 	def task2():
-		list_check = list_pred.copy()
-		while list_check == []:
-			time.sleep(0.1)
-			list_check = list_pred.copy()
-		
-		index_frame = 0
-		for i, (_, _, frames, coords) in enumerate(gen_2, start=1):
-			while len(list_check) < i:
-				time.sleep(0.1)
-				list_check = list_pred.copy()	
-			
-			pred = list_check[i-1]
-			
-			for p, f, c in zip(pred, frames, coords):
-				y1, y2, x1, x2 = c
-				p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
-				f[y1:y2, x1:x2] = p
-				list_frame[str(index_frame)] = f
-				index_frame+=1
+		while len(list_frame) < len(full_frames):
+			while list_pred.empty():
+				time.sleep(0.02)
+    	
+			item = list_pred.get()
+			idx = item["idx"]
+			pred = item["pred"]
+				
+			f, c = full_frames[idx], full_coors[idx]
+			y1, y2, x1, x2 = c
+			pred = cv2.resize(pred.astype(np.uint8), (x2 - x1, y2 - y1))
+			f[y1:y2, x1:x2] = pred
+			list_frame[str(idx)] = f
 
 	print("before thread", time.time() - start_time)
 	# Tạo đối tượng thread cho mỗi công việc
@@ -318,4 +303,4 @@ def main():
 	subprocess.call(command, shell=platform.system() != 'Windows')
 
 if __name__ == '__main__':
-	main()
+	lipsync(f"{WORK_PATH}/data/lib/01/video.mp4", f"{WORK_PATH}/data/test/10s/audio.wav")
