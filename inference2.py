@@ -195,14 +195,40 @@ def explain_num_frames(frames, num_target):
 		new_frames.append(z)
 		
 	return new_frames
-def lipsync(video_path, audio_path):
-	 
-	args.face = video_path
-	# frames
-	video_stream = cv2.VideoCapture(video_path)
-	fps = video_stream.get(cv2.CAP_PROP_FPS)
-	full_frames = []
 
+args.face = "core/Fast_Wav2Lip/data/lib/01/video.mp4"
+# frames
+video_stream = cv2.VideoCapture(args.face)
+fps = video_stream.get(cv2.CAP_PROP_FPS)
+full_frames = []
+
+# process
+while True:
+	
+	# Stop frame
+	still_reading, frame = video_stream.read()
+	
+	if not still_reading:
+		video_stream.release()
+		break
+	else:
+		# preprocess
+		if args.resize_factor > 1:
+			frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
+		if args.rotate:
+			frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
+		
+		# crop vung mat
+		y1, y2, x1, x2 = args.crop
+		if x2 == -1: x2 = frame.shape[1]
+		if y2 == -1: y2 = frame.shape[0]
+		frame = frame[y1:y2, x1:x2]
+
+		full_frames.append(frame)
+
+
+def lipsync(video_path, audio_path):
+	global full_frames
 	# audio
 	wav = audio.load_wav(audio_path, 16000)
 	mel = audio.melspectrogram(wav)
@@ -210,30 +236,6 @@ def lipsync(video_path, audio_path):
 		raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
 	full_mels = []
 	mel_idx_multiplier = 80./fps 
-
-	# process
-	
-	while True:
-		# Stop frame
-		still_reading, frame = video_stream.read()
-		
-		if not still_reading:
-			video_stream.release()
-			break
-		else:
-			# preprocess
-			if args.resize_factor > 1:
-				frame = cv2.resize(frame, (frame.shape[1]//args.resize_factor, frame.shape[0]//args.resize_factor))
-			if args.rotate:
-				frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
-			
-			# crop vung mat
-			y1, y2, x1, x2 = args.crop
-			if x2 == -1: x2 = frame.shape[1]
-			if y2 == -1: y2 = frame.shape[0]
-			frame = frame[y1:y2, x1:x2]
-
-			full_frames.append(frame)
 	
 	i = 0
 	while True:
@@ -253,12 +255,9 @@ def lipsync(video_path, audio_path):
 	full_faces, full_coors = load_cache(args, len(full_frames))
 	
 	num_target = len(full_mels)
-	print(f"num full_mels pre {len(full_mels)}")
+	
 	full_faces = explain_num_frames(full_faces, num_target)
-	print(f"num full_mels after{len(full_mels)}")
-	print(f"num full_faces {len(full_faces)}")
 	full_frames = explain_num_frames(full_frames, num_target)
-	print(f"num full_coors {len(full_coors)}")
 	full_coors = explain_num_frames(full_coors, num_target)
 
 
