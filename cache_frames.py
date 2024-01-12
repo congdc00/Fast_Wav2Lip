@@ -122,19 +122,6 @@ def _load(checkpoint_path):
 								map_location=lambda storage, loc: storage)
 	return checkpoint
 
-def load_model(path):
-	model = Wav2Lip()
-	print("Load checkpoint from: {}".format(path))
-	checkpoint = _load(path)
-	s = checkpoint["state_dict"]
-	new_s = {}
-	for k, v in s.items():
-		new_s[k.replace('module.', '')] = v
-	model.load_state_dict(new_s)
-
-	model = model.to(device)
-	return model.eval()
-
 def main():
 	video_stream = cv2.VideoCapture(args.face)
 	fps = video_stream.get(cv2.CAP_PROP_FPS)
